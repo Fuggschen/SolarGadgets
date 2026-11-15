@@ -8,7 +8,8 @@ namespace SolarGadgets.Game
     [HarmonyPatch(typeof(TrainCarCustomization.TrainCarCustomizerBase), nameof(TrainCarCustomization.TrainCarCustomizerBase.PowerState), MethodType.Getter)]
     public static class PowerStatePatch
     {
-        // Solar power only fills in when the car has no fuse, never overrides a switched-off gadget or car fuse.
+        // Solar power only fills in when the car has no fuse or its fuse only follows a stopped dynamo, and never
+        // overrides a switched-off gadget or car fuse.
         // On a diesel loco, a working fuse delivers nothing once the loco battery and every other source are empty.
         // On a caboose with the setting on, the fuse is only a switch and the solar network must supply the power.
         private static void Postfix(TrainCarCustomization.TrainCarCustomizerBase __instance, ref bool __result)
@@ -24,7 +25,8 @@ namespace SolarGadgets.Game
                 return;
             }
 
-            if (!__instance.powerSwitch || !__instance.IsSolderable || !__instance.IsSoldered || __instance.fuse != null)
+            if (!__instance.powerSwitch || !__instance.IsSolderable || !__instance.IsSoldered
+                || (__instance.fuse != null && !SolarPowerNetwork.FuseFollowsDynamo(__instance.CustomTrainCar)))
             {
                 return;
             }

@@ -4,6 +4,7 @@ using System.Text;
 using DV.Customization;
 using DV.Customization.Gadgets;
 using DV.Customization.Gadgets.Implementations;
+using DV.ThingTypes;
 using DV.Utils;
 using DV.WeatherSystem;
 using LocoSim.Implementations;
@@ -236,6 +237,14 @@ namespace SolarGadgets.Game
                 && customization != null
                 && customization.TrainCar != null
                 && !customization.TrainCar.IsLoco;
+        }
+
+        // Steam locos and tenders switch their electronics fuse with the dynamo's output, so an off fuse there only
+        // means the dynamo is not running, not that the player cut the power.
+        public static bool FuseFollowsDynamo(TrainCarCustomization? customization)
+        {
+            var livery = customization != null && customization.TrainCar != null ? customization.TrainCar.carLivery : null;
+            return livery != null && (CarTypes.IsSteamLocomotive(livery) || CarTypes.IsTender(livery));
         }
 
         public static float GetBrightness(TrainCarCustomization? customization)
@@ -1037,11 +1046,16 @@ namespace SolarGadgets.Game
                 return "switched off";
             }
 
-            // A turned-off car fuse cuts the gadget off from every source, solar included.
+            // A turned-off car fuse cuts the gadget off from every source, solar included, except where the fuse only
+            // follows the dynamo: there the gadget is left to the network like on a car without a fuse.
             bool fused = gadget.fuse != null;
             if (fused && !gadget.fuse!.State)
             {
-                return "car fuse off";
+                if (!FuseFollowsDynamo(customization))
+                {
+                    return "car fuse off";
+                }
+                fused = false;
             }
             if (onCarFuse.HasValue && fused != onCarFuse.Value)
             {

@@ -29,6 +29,7 @@
     <Reference Include="Newtonsoft.Json" />
     <Reference Include="DV.Simulation" />
     <Reference Include="DV.WeatherSystem" />
+    <Reference Include="DV.ThingTypes" />
   </ItemGroup>
   <ItemGroup>
 	<PackageReference Include="Krafs.Publicizer" Version="2.3.0">
