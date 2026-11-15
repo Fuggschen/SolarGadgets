@@ -392,9 +392,9 @@ namespace SolarGadgets.Game
                     Capacity = loco.CapacityWh,
                 });
                 status.Capacity += loco.CapacityWh;
-                // Only a boost converter or a running alternator charges the loco battery; DrawEnergy only takes
-                // from it while its electrics are on.
-                if (ConverterBudgetWatts() > 0f || AlternatorRunning)
+                // Only a boost converter, a running alternator or the game itself (regenerative braking, a modded
+                // generator) charges the loco battery; DrawEnergy only takes from it while its electrics are on.
+                if (ConverterBudgetWatts() > 0f || AlternatorRunning || GameDrawInGameTime < 0f)
                 {
                     status.Room += (100f - loco.Charge) / 100f * loco.CapacityWh;
                 }

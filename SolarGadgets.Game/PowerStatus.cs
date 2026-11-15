@@ -23,8 +23,8 @@ namespace SolarGadgets.Game
 
         /// <summary>
         /// What flows into the batteries (+) or out of them (-): supply minus demand, or 0 when no battery can
-        /// take or give it. The loco battery only takes charge through a boost converter or a running alternator, and
-        /// only gives it while the loco's electrics are on.
+        /// take or give it. The loco battery only takes charge through a boost converter, a running alternator or the
+        /// game charging it itself, and only gives it while the loco's electrics are on.
         /// </summary>
         public float Flow;
 
