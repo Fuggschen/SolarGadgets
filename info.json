@@ -5,7 +5,8 @@
 	"Author": "Fuggschen",
 	"AssemblyName": "SolarGadgets.Game.dll",
 	"EntryMethod": "SolarGadgets.Game.Main.Load",
-	"Repository": "https://raw.githubusercontent.com/Fuggschen/SolarGadgets/refs/heads/main/repository.json",
+	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1837",
+	"Repository":"https://raw.githubusercontent.com/Fuggschen/SolarGadgets/refs/heads/main/repository.json",
 	"Requirements": [
 		"custom_item_mod"
 	]
