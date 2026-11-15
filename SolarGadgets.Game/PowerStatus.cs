@@ -3,7 +3,8 @@ using System.Collections.Generic;
 namespace SolarGadgets.Game
 {
     /// <summary>
-    /// One car's power network at one moment, from <see cref="SolarPowerNetwork.GetStatus"/>. Other mods
+    /// One car's power network at one moment, from <see cref="SolarPowerNetwork.GetStatus"/>; a steam loco and its
+    /// coupled tender report the same network. Other mods
     /// (dv-RAT) read it through reflection, so the names of these classes and fields must stay.
     /// Power is in W, energy in Wh of game time, charge in percent.
     /// </summary>

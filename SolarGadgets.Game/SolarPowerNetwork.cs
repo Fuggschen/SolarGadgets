@@ -14,7 +14,8 @@ namespace SolarGadgets.Game
 {
     /// <summary>
     /// Per-car power from soldered solar panels, external batteries and the loco's own battery
-    /// (simulated on diesels, the real traction battery on the BE2). Power is in W, energy in Wh of game time.
+    /// (simulated on diesels, the real traction battery on the BE2). A steam loco's network also runs the tender
+    /// coupled behind it. Power is in W, energy in Wh of game time.
     /// </summary>
     public class SolarPowerNetwork : MonoBehaviour
     {
@@ -33,6 +34,13 @@ namespace SolarGadgets.Game
         private const double SKIP_THRESHOLD_HOURS = 0.25;
         private const double SKIP_SAMPLE_HOURS = 0.1;
 
+        // The gadgets soldered to this car.
+        private readonly List<GadgetSolarPanel> ownPanels = new List<GadgetSolarPanel>();
+        private readonly List<GadgetBattery> ownBatteries = new List<GadgetBattery>();
+        private readonly List<GadgetChargeMeter> ownMeters = new List<GadgetChargeMeter>();
+        private readonly List<GadgetBoostConverter> ownConverters = new List<GadgetBoostConverter>();
+
+        // The gadgets this network runs: its own plus those of a tender it leads, refreshed every tick.
         private readonly List<GadgetSolarPanel> panels = new List<GadgetSolarPanel>();
         private readonly List<GadgetBattery> batteries = new List<GadgetBattery>();
         private readonly List<GadgetChargeMeter> meters = new List<GadgetChargeMeter>();
@@ -40,6 +48,10 @@ namespace SolarGadgets.Game
         private readonly List<GadgetWiringModule.WireLinkPort> linksBuffer = new List<GadgetWiringModule.WireLinkPort>();
 
         private TrainCarCustomization customization = null!;
+
+        // A steam loco and the tender coupled behind it run as one network, led by the loco's.
+        private SolarPowerNetwork? tender;
+        private SolarPowerNetwork? leader;
         private IInternalBattery? loco;
         private float tickTimer;
         private DateTime? previousTime;
@@ -86,6 +98,16 @@ namespace SolarGadgets.Game
             return network;
         }
 
+        // The network that powers the car: a coupled tender answers with its loco's.
+        private static SolarPowerNetwork? Resolve(TrainCarCustomization? customization)
+        {
+            return customization != null && customization.TryGetComponent(out SolarPowerNetwork network) ? network.Lead : null;
+        }
+
+        private SolarPowerNetwork Lead => leader != null && leader.tender == this ? leader : this;
+
+        private bool IsFollower => Lead != this;
+
         // Battery-electric locos (the BE2 and modded ones) get their real traction battery, diesels the simulated one.
         // The traction check runs first so a loco with both a traction battery and an engine keeps its real battery.
         // Returns the diesel one for saving.
@@ -126,7 +148,7 @@ namespace SolarGadgets.Game
 
         public static SolarPowerNetwork? Get(TrainCarCustomization? customization)
         {
-            return customization != null && customization.TryGetComponent(out SolarPowerNetwork network) ? network : null;
+            return Resolve(customization);
         }
 
         public static LocoElectrics? GetLoco(TrainCar car)
@@ -138,14 +160,13 @@ namespace SolarGadgets.Game
 
         public static bool HasLoco(TrainCarCustomization? customization)
         {
-            return customization != null
-                && customization.TryGetComponent(out SolarPowerNetwork network)
-                && network.LocoSimulated;
+            var network = Resolve(customization);
+            return network != null && network.LocoSimulated;
         }
 
         private bool LocoSimulated => loco != null && loco.Present;
 
-        public bool HasContent => panels.Count > 0 || batteries.Count > 0 || meters.Count > 0 || converters.Count > 0 || LocoSimulated;
+        public bool HasContent => !IsFollower && (panels.Count > 0 || batteries.Count > 0 || meters.Count > 0 || converters.Count > 0 || LocoSimulated);
 
         // Capacity-weighted charge of the simulated loco battery and all soldered batteries; null without any.
         public float? CombinedCharge
@@ -218,25 +239,25 @@ namespace SolarGadgets.Game
 
         public static bool IsPowered(TrainCarCustomization? customization)
         {
-            return customization != null
-                && customization.TryGetComponent(out SolarPowerNetwork network)
-                && network.Powered;
+            var network = Resolve(customization);
+            return network != null && network.Powered;
         }
 
         public static bool IsLocoDead(TrainCarCustomization? customization)
         {
-            return customization != null
-                && customization.TryGetComponent(out SolarPowerNetwork network)
-                && network.LocoDead;
+            var network = Resolve(customization);
+            return network != null && network.LocoDead;
         }
 
         // A caboose has an electrics fuse but nothing generating power, so with the setting on its fuse is only a switch.
+        // A tender's fuse follows its loco's dynamo instead.
         public static bool FuseNeedsSupply(TrainCarCustomization? customization)
         {
             return Main.Settings.nonLocoFuseNeedsPower
                 && customization != null
                 && customization.TrainCar != null
-                && !customization.TrainCar.IsLoco;
+                && !customization.TrainCar.IsLoco
+                && !CarTypes.IsTender(customization.TrainCar.carLivery);
         }
 
         // Steam locos and tenders switch their electronics fuse with the dynamo's output, so an off fuse there only
@@ -249,9 +270,8 @@ namespace SolarGadgets.Game
 
         public static float GetBrightness(TrainCarCustomization? customization)
         {
-            return customization != null && customization.TryGetComponent(out SolarPowerNetwork network)
-                ? network.Brightness
-                : 1f;
+            var network = Resolve(customization);
+            return network != null ? network.Brightness : 1f;
         }
 
         private static float BatteryCapacity(GadgetBattery battery)
@@ -336,7 +356,7 @@ namespace SolarGadgets.Game
                     .AppendLine(battery.battery.Depleted ? " (depleted)" : "");
             }
 
-            foreach (var customizer in customization.Customizers)
+            foreach (var customizer in AllCustomizers())
             {
                 if (IsPotentialConsumer(customizer, out var gadget) && gadget.GetComponent<Mount>() == null)
                 {
@@ -350,6 +370,10 @@ namespace SolarGadgets.Game
         /// <summary>The network as it is now, for other mods; see <see cref="PowerStatus"/>.</summary>
         public PowerStatus GetStatus()
         {
+            if (IsFollower)
+            {
+                return Lead.GetStatus();
+            }
             float consumption = Main.Settings.consumptionMultiplier;
             var status = new PowerStatus
             {
@@ -410,7 +434,7 @@ namespace SolarGadgets.Game
             // Moves energy between batteries rather than using it, so it is listed but not part of Demand.
             AddConsumer(status, "Boost converter (to loco battery)", converterInputW);
             bool? filter = ConsumerFuseFilter();
-            foreach (var customizer in customization.Customizers)
+            foreach (var customizer in AllCustomizers())
             {
                 if (IsPotentialConsumer(customizer, out var gadget) && ExclusionReason(gadget, filter) == null)
                 {
@@ -443,59 +467,59 @@ namespace SolarGadgets.Game
 
         public void Register(GadgetSolarPanel panel)
         {
-            if (!panels.Contains(panel))
+            if (!ownPanels.Contains(panel))
             {
-                panels.Add(panel);
+                ownPanels.Add(panel);
             }
             Tick();
         }
 
         public void Unregister(GadgetSolarPanel panel)
         {
-            panels.Remove(panel);
+            ownPanels.Remove(panel);
             Tick();
         }
 
         public void Register(GadgetBattery battery)
         {
-            if (!batteries.Contains(battery))
+            if (!ownBatteries.Contains(battery))
             {
-                batteries.Add(battery);
+                ownBatteries.Add(battery);
             }
             Tick();
         }
 
         public void Register(GadgetChargeMeter meter)
         {
-            if (!meters.Contains(meter))
+            if (!ownMeters.Contains(meter))
             {
-                meters.Add(meter);
+                ownMeters.Add(meter);
             }
         }
 
         public void Unregister(GadgetChargeMeter meter)
         {
-            meters.Remove(meter);
+            ownMeters.Remove(meter);
         }
 
         public void Register(GadgetBoostConverter converter)
         {
-            if (!converters.Contains(converter))
+            if (!ownConverters.Contains(converter))
             {
-                converters.Add(converter);
+                ownConverters.Add(converter);
             }
             Tick();
         }
 
         public void Unregister(GadgetBoostConverter converter)
         {
-            converters.Remove(converter);
+            ownConverters.Remove(converter);
             Tick();
         }
 
         public void Unregister(GadgetBattery battery)
         {
-            batteries.Remove(battery);
+            ownBatteries.Remove(battery);
             Tick();
         }
 
@@ -510,9 +534,102 @@ namespace SolarGadgets.Game
             Tick();
         }
 
+        // Links a steam loco with the tender coupled at its rear, the way the game finds it, from either side.
+        private void UpdateTenderLink()
+        {
+            var car = customization.TrainCar;
+            if (car == null)
+            {
+                return;
+            }
+            if (CarTypes.IsTender(car.carLivery))
+            {
+                var locoCar = CoupledSteamLoco(car);
+                leader = locoCar != null && locoCar.Customization != null ? For(locoCar.Customization) : null;
+                if (leader != null)
+                {
+                    leader.tender = this;
+                }
+                return;
+            }
+            var tenderCar = CoupledTender(car);
+            tender = tenderCar != null && tenderCar.Customization != null ? For(tenderCar.Customization) : null;
+            if (tender != null)
+            {
+                tender.leader = this;
+            }
+        }
+
+        private static TrainCar? CoupledTender(TrainCar loco)
+        {
+            if (!CarTypes.IsSteamLocomotive(loco.carLivery))
+            {
+                return null;
+            }
+            var other = loco.rearCoupler.coupledTo != null ? loco.rearCoupler.coupledTo.train : null;
+            return other != null && CarTypes.IsTender(other.carLivery) ? other : null;
+        }
+
+        private static TrainCar? CoupledSteamLoco(TrainCar tender)
+        {
+            foreach (var coupler in tender.couplers)
+            {
+                var other = coupler.coupledTo != null ? coupler.coupledTo.train : null;
+                if (other != null && CoupledTender(other) == tender)
+                {
+                    return other;
+                }
+            }
+            return null;
+        }
+
+        private void GatherGadgets()
+        {
+            var follower = tender != null && tender.leader == this ? tender : null;
+            Gather(panels, ownPanels, follower?.ownPanels);
+            Gather(batteries, ownBatteries, follower?.ownBatteries);
+            Gather(meters, ownMeters, follower?.ownMeters);
+            Gather(converters, ownConverters, follower?.ownConverters);
+        }
+
+        private static void Gather<T>(List<T> into, List<T> own, List<T>? other)
+        {
+            into.Clear();
+            into.AddRange(own);
+            if (other != null)
+            {
+                into.AddRange(other);
+            }
+        }
+
+        private IEnumerable<Customization.CustomizerBase> AllCustomizers()
+        {
+            foreach (var customizer in customization.Customizers)
+            {
+                yield return customizer;
+            }
+            if (tender != null && tender.leader == this)
+            {
+                foreach (var customizer in tender.customization.Customizers)
+                {
+                    yield return customizer;
+                }
+            }
+        }
+
         // Also polls soldering of panels and batteries, which joins or leaves them from the network.
         private void Tick()
         {
+            UpdateTenderLink();
+            if (IsFollower)
+            {
+                // The leader credits the time in between, so this network starts measuring afresh once uncoupled.
+                previousTime = null;
+                Lead.Tick();
+                return;
+            }
+            GatherGadgets();
+
             var weather = SingletonBehaviour<WeatherDriver>.Instance;
             if (weather != null && weather.manager != null)
             {
@@ -1009,7 +1126,7 @@ namespace SolarGadgets.Game
         private float ConsumerWatts(bool? onCarFuse)
         {
             float watts = 0f;
-            foreach (var customizer in customization.Customizers)
+            foreach (var customizer in AllCustomizers())
             {
                 if (IsPotentialConsumer(customizer, out var gadget) && ExclusionReason(gadget, onCarFuse) == null)
                 {
@@ -1102,7 +1219,7 @@ namespace SolarGadgets.Game
                 }
             }
 
-            foreach (var customizer in customization.Customizers)
+            foreach (var customizer in AllCustomizers())
             {
                 if (customizer is TrainCarCustomization.TrainCarCustomizerBase carCustomizer)
                 {
