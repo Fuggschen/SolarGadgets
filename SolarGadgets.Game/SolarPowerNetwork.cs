@@ -68,8 +68,8 @@ namespace SolarGadgets.Game
         // The two parts of demand: the loco's own loads run on the loco battery only, gadgets on the 12 V side.
         private float locoLoad;
         private float gadgetDemand;
-        // What the loco's own sim takes from its battery (traction motors etc.); the game drains it itself.
-        // Negative while regenerative braking charges the battery.
+        // What the loco's own sim and other mods take from its battery (traction motors etc.); they drain it
+        // themselves. Negative while regenerative braking or a modded generator charges the battery.
         private float gameDraw;
 
         // Last tick's boost converter power: drawn on the 12 V side and delivered into the loco battery.
@@ -650,7 +650,7 @@ namespace SolarGadgets.Game
                 alternatorW = AlternatorRunning ? PowerSpec.ALTERNATOR_W * Main.Settings.chargingMultiplier : 0f;
                 dynamoW = DynamoFlow() * PowerSpec.DYNAMO_SURPLUS_W * Main.Settings.chargingMultiplier;
                 supply = production + alternatorW + dynamoW;
-                gameDraw = LocoSimulated ? loco!.GameWatts : 0f;
+                gameDraw = LocoSimulated ? loco!.SampleGameWatts() : 0f;
 
                 // A backwards jump means a load or a time reset; start measuring again from here.
                 if (previousTime.HasValue && now > previousTime.Value)

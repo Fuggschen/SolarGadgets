@@ -54,7 +54,7 @@ namespace SolarGadgets.Game
         public bool HasStarter => true;
 
         // The game does not simulate this battery, so its sim draws nothing from it.
-        public float GameWatts => 0f;
+        public float SampleGameWatts() => 0f;
 
         public double Add(double wattHours)
         {

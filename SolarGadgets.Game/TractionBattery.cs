@@ -11,8 +11,13 @@ namespace SolarGadgets.Game
     public class TractionBattery : IInternalBattery
     {
         private readonly ResourceContainer container;
-        private readonly LocoSim.Implementations.Battery simBattery;
         private readonly Fuse fuse;
+
+        // Container units this mod wrote since the last sample, so they can be told apart from the game's own.
+        private double ownUnits;
+        private float sampledAmount;
+        private float sampledTime = -1f;
+        private float gameWatts;
 
         public TrainCar Car { get; }
 
@@ -33,13 +38,30 @@ namespace SolarGadgets.Game
 
         public bool HasStarter => false;
 
-        // The sim Battery drains its charge from this port, which sums traction motors and every other loco system.
-        public float GameWatts => simBattery.powerReader.Value;
+        // Measured from the charge itself rather than the sim Battery's power port, so it also covers mods that
+        // refill the container directly, like the DE10's generator.
+        public float SampleGameWatts()
+        {
+            float amount = container.amountReadOut.Value;
+            float now = Time.time;
+            if (now <= sampledTime)
+            {
+                return gameWatts;
+            }
+            if (sampledTime >= 0f)
+            {
+                double gameUnits = amount - sampledAmount - ownUnits;
+                gameWatts = (float)(-gameUnits * PowerSpec.WH_PER_SIM_UNIT / ((now - sampledTime) / 3600.0));
+            }
+            sampledAmount = amount;
+            sampledTime = now;
+            ownUnits = 0.0;
+            return gameWatts;
+        }
 
-        private TractionBattery(TrainCar car, LocoSim.Implementations.Battery simBattery, ResourceContainer container, Fuse fuse)
+        private TractionBattery(TrainCar car, ResourceContainer container, Fuse fuse)
         {
             Car = car;
-            this.simBattery = simBattery;
             this.container = container;
             this.fuse = fuse;
         }
@@ -67,7 +89,7 @@ namespace SolarGadgets.Game
                     charge = container;
                 }
             }
-            return battery != null && charge != null ? new TractionBattery(car, battery, charge, fuse) : null;
+            return battery != null && charge != null ? new TractionBattery(car, charge, fuse) : null;
         }
 
         public LocoLoads Loads()
@@ -84,6 +106,7 @@ namespace SolarGadgets.Game
                 return 0.0;
             }
             container.refillExtIn.Value = units;
+            ownUnits += units;
             return units * PowerSpec.WH_PER_SIM_UNIT;
         }
 
@@ -95,6 +118,7 @@ namespace SolarGadgets.Game
                 return 0.0;
             }
             container.consumeExtIn.Value = units;
+            ownUnits -= units;
             return units * PowerSpec.WH_PER_SIM_UNIT;
         }
 

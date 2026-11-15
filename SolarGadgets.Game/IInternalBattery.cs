@@ -29,8 +29,9 @@ namespace SolarGadgets.Game
         // The loco's own consumers this battery feeds, besides gadgets.
         LocoLoads Loads();
 
-        // What the loco's own sim takes from this battery, in W; the game drains it, so the network only reports it.
-        float GameWatts { get; }
+        // What the game and other mods take from this battery (+) or put into it (-) since the last call, in W of
+        // real time. They move the charge themselves, so the network only reports it. Call once per network tick.
+        float SampleGameWatts();
 
         // Returns the Wh actually stored or taken.
         double Add(double wattHours);
