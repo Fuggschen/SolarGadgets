@@ -991,7 +991,7 @@ namespace SolarGadgets.Game
         // Ported from dv-batterydischargesystem BatteryManager.CountActiveGadgets.
         // Uses PowerSwitch, not PowerState: PowerState depends on Powered, and counting it would oscillate.
         // Which gadgets this network supplies: all of them (null) on a loco with electrics on, since its battery feeds
-        // gadgets on and off the fuse, and on a car whose fuse is only a switch; otherwise those without a working fuse.
+        // gadgets on and off the fuse, and on a car whose fuse is only a switch; otherwise those on cars without a fuse.
         private bool? ConsumerFuseFilter()
         {
             return locoActive || FuseNeedsSupply(customization) ? (bool?)null : false;
@@ -1037,10 +1037,15 @@ namespace SolarGadgets.Game
                 return "switched off";
             }
 
-            bool fused = gadget.fuse != null && gadget.fuse.State;
+            // A turned-off car fuse cuts the gadget off from every source, solar included.
+            bool fused = gadget.fuse != null;
+            if (fused && !gadget.fuse!.State)
+            {
+                return "car fuse off";
+            }
             if (onCarFuse.HasValue && fused != onCarFuse.Value)
             {
-                return fused ? "runs on the car fuse" : "car fuse off";
+                return "runs on the car fuse";
             }
 
             return IsSwitchedOff(gadget) ? "wired switch off" : null;
