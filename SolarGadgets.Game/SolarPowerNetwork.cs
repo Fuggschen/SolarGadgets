@@ -309,7 +309,7 @@ namespace SolarGadgets.Game
             string time = previousTime.HasValue ? previousTime.Value.ToString("HH:mm") : "--:--";
             return $"{(isDay ? "Day" : "Night")} {time}, powered: {Powered}, brightness: {Brightness:P0}, " +
                 $"supply: {supply:F0} W / demand: {demand:F0} W" +
-                (gameDraw != 0f ? $", loco sim: {gameDraw:F0} W" : "") +
+                (gameDraw != 0f ? $", loco sim: {GameDrawInGameTime:F0} W" : "") +
                 (LocoDead ? ", loco dead" : "");
         }
 
