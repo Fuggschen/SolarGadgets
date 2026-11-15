@@ -218,6 +218,11 @@ namespace SolarGadgets.Game
         // second, 8 kW of traction motors count as about 680 W.
         private float GameDrawInGameTime => (float)(gameDraw * realPerGameTime);
 
+        // Supply and demand including the loco sim: what it puts into the battery is supply, what it takes is demand.
+        private float TotalSupply => supply + Mathf.Max(-GameDrawInGameTime, 0f);
+
+        private float TotalDemand => demand + Mathf.Max(GameDrawInGameTime, 0f);
+
         // +1 while the batteries gain charge, -1 while they lose it, 0 when balanced, full or empty.
         public int ChargeTrend
         {
@@ -308,8 +313,7 @@ namespace SolarGadgets.Game
         {
             string time = previousTime.HasValue ? previousTime.Value.ToString("HH:mm") : "--:--";
             return $"{(isDay ? "Day" : "Night")} {time}, powered: {Powered}, brightness: {Brightness:P0}, " +
-                $"supply: {supply:F0} W / demand: {demand:F0} W" +
-                (gameDraw != 0f ? $", loco sim: {GameDrawInGameTime:F0} W" : "") +
+                $"supply: {TotalSupply:F0} W / demand: {TotalDemand:F0} W" +
                 (LocoDead ? ", loco dead" : "");
         }
 
@@ -377,8 +381,8 @@ namespace SolarGadgets.Game
             float consumption = Main.Settings.consumptionMultiplier;
             var status = new PowerStatus
             {
-                Supply = supply + Mathf.Max(-GameDrawInGameTime, 0f),
-                Demand = demand + Mathf.Max(GameDrawInGameTime, 0f),
+                Supply = TotalSupply,
+                Demand = TotalDemand,
                 Charge = CombinedCharge,
             };
             if (LocoSimulated)
