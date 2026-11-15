@@ -1,0 +1,12 @@
+{
+    "Name": "Solar Battery",
+    "Description": "Mount and solder next to a solar panel. Charges during the day and powers the car's gadgets at night.",
+    "Amount": 10,
+    "Price": 1500,
+    "AssetBundleName": "solarbattery",
+    "PrefabPath": "Assets/Prefabs/SolarBattery.prefab",
+    "IconStandardPath": "Assets/Texture2D/solar_battery_icon.png",
+    "IconDroppedPath": "Assets/Texture2D/solar_battery_dropped.png",
+    "ShelfPrefabPath": "Assets/Prefabs/SolarBattery_ShelfItem.prefab",
+    "ShelfBounds": { "x": 0.53, "y": 0.39, "z": 0.33 }
+}

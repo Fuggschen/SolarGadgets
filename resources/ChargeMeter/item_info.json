@@ -1,0 +1,10 @@
+{
+    "Name": "Battery Charge Meter",
+    "Description": "Shows the combined charge of every battery on the car. Runs on its own coin cell, so it only needs to be soldered.",
+    "Amount": 10,
+    "Price": 800,
+    "AssetBundleName": "chargemeter",
+    "PrefabPath": "Assets/Prefabs/ChargeMeter.prefab",
+    "IconStandardPath": "Assets/Texture2D/charge_meter_placeholder.png",
+    "IconDroppedPath": "Assets/Texture2D/charge_meter_placeholder.png"
+}

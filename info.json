@@ -1,0 +1,11 @@
+{
+	"Id": "SolarGadgets",
+	"Version": "0.1.0",
+	"DisplayName": "Solar Gadgets",
+	"Author": "Fuggschen",
+	"AssemblyName": "SolarGadgets.Game.dll",
+	"EntryMethod": "SolarGadgets.Game.Main.Load",
+	"Requirements": [
+		"custom_item_mod"
+	]
+}

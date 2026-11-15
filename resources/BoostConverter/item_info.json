@@ -1,0 +1,12 @@
+{
+    "Name": "Boost Converter",
+    "Description": "Solder onto a loco to charge its battery from solar panels and external batteries, up to 140 A from the 12 V side.",
+    "Amount": 10,
+    "Price": 1200,
+    "AssetBundleName": "boosterconverter",
+    "PrefabPath": "Assets/Prefabs/BoostConverter.prefab",
+    "IconStandardPath": "Assets/Texture2D/BoosterConverter_icon.png",
+    "IconDroppedPath": "Assets/Texture2D/BoosterConverter_dropped.png",
+    "ShelfPrefabPath": "Assets/Prefabs/BoostConverter_ShelfItem.prefab",
+    "ShelfBounds": { "x": 0.19, "y": 0.08, "z": 0.32 }
+}

@@ -1,0 +1,12 @@
+{
+    "Name": "Solar Panel",
+    "Description": "Mount and solder to a train car to power its gadgets during the day. Add a solar battery to keep them running at night.",
+    "Amount": 10,
+    "Price": 2500,
+    "AssetBundleName": "solarpanel",
+    "PrefabPath": "Assets/Prefabs/SolarPanel.prefab",
+    "IconStandardPath": "Assets/Texture2D/solar_icon.png",
+    "IconDroppedPath": "Assets/Texture2D/solar_dropped.png",
+    "ShelfPrefabPath": "Assets/Prefabs/SolarPanel_ShelfItem.prefab",
+    "ShelfBounds": { "x": 0.78, "y": 0.39, "z": 0.02 }
+}
