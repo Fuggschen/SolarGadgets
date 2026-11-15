@@ -10,9 +10,13 @@ namespace SolarGadgets.Game
     /// </summary>
     public class PowerStatus
     {
-        /// <summary>Solar panels plus the alternator of a running engine or a running steam dynamo.</summary>
+        /// <summary>
+        /// Solar panels, the alternator of a running engine or a running steam dynamo, what the game itself charges into
+        /// the loco battery, and what comes in from other locos on the MU cable.
+        /// </summary>
         public float Supply;
 
+        /// <summary>The consumers, what the game itself takes from the loco battery, and what goes out over the MU cable.</summary>
         public float Demand;
 
         /// <summary>Capacity-weighted charge of the loco battery and the soldered batteries; null without any.</summary>

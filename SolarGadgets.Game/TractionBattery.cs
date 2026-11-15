@@ -97,7 +97,8 @@ namespace SolarGadgets.Game
             return LocoLoads.Read(Car.SimController);
         }
 
-        // Writing to the external ports makes the container apply the amount and reset the port to 0.
+        // Writing to the external ports makes the container apply the amount and reset the port to 0. Adding to the
+        // port keeps a second write in the same tick from replacing the first.
         public double Add(double wattHours)
         {
             float units = Mathf.Min((float)(wattHours / PowerSpec.WH_PER_SIM_UNIT), container.capacity - container.amountReadOut.Value);
@@ -105,7 +106,7 @@ namespace SolarGadgets.Game
             {
                 return 0.0;
             }
-            container.refillExtIn.Value = units;
+            container.refillExtIn.Value += units;
             ownUnits += units;
             return units * PowerSpec.WH_PER_SIM_UNIT;
         }
@@ -117,7 +118,7 @@ namespace SolarGadgets.Game
             {
                 return 0.0;
             }
-            container.consumeExtIn.Value = units;
+            container.consumeExtIn.Value += units;
             ownUnits -= units;
             return units * PowerSpec.WH_PER_SIM_UNIT;
         }

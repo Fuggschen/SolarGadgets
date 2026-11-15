@@ -4,6 +4,7 @@ using System.Text;
 using DV.Customization;
 using DV.Customization.Gadgets;
 using DV.Customization.Gadgets.Implementations;
+using DV.MultipleUnit;
 using DV.ThingTypes;
 using DV.Utils;
 using DV.WeatherSystem;
@@ -52,6 +53,20 @@ namespace SolarGadgets.Game
         // A steam loco and the tender coupled behind it run as one network, led by the loco's.
         private SolarPowerNetwork? tender;
         private SolarPowerNetwork? leader;
+
+        // Locos on the same MU cable whose electrics are on, refreshed every tick. They cover what this network's own
+        // sources cannot, but their batteries never equalize with this one's.
+        private readonly List<SolarPowerNetwork> muPartners = new List<SolarPowerNetwork>();
+        private readonly HashSet<MultipleUnitModule> muVisited = new HashSet<MultipleUnitModule>();
+        private readonly Queue<MultipleUnitModule> muQueue = new Queue<MultipleUnitModule>();
+
+        // Energy that came in from or went out to MU partners since this network's last tick, whichever network moved
+        // it, and the power that makes over that tick.
+        private double muInWattHours;
+        private double muOutWattHours;
+        private float muInW;
+        private float muOutW;
+
         private IInternalBattery? loco;
         private float tickTimer;
         private DateTime? previousTime;
@@ -210,7 +225,7 @@ namespace SolarGadgets.Game
                 }
                 float loco = Mathf.Max(alternatorSurplus, 0f) + Mathf.Min(alternatorAfterLoco, 0f);
                 float dynamo = FindEmptiestBattery() != null ? dynamoW : 0f;
-                return solar + loco + dynamo - (converterInputW - converterOutputW) - GameDrawInGameTime;
+                return solar + loco + dynamo + muInW - muOutW - (converterInputW - converterOutputW) - GameDrawInGameTime;
             }
         }
 
@@ -218,10 +233,10 @@ namespace SolarGadgets.Game
         // second, 8 kW of traction motors count as about 680 W.
         private float GameDrawInGameTime => (float)(gameDraw * realPerGameTime);
 
-        // Supply and demand including the loco sim: what it puts into the battery is supply, what it takes is demand.
-        private float TotalSupply => supply + Mathf.Max(-GameDrawInGameTime, 0f);
+        // Supply and demand including the loco sim and the MU cable: what comes in is supply, what goes out is demand.
+        private float TotalSupply => supply + Mathf.Max(-GameDrawInGameTime, 0f) + muInW;
 
-        private float TotalDemand => demand + Mathf.Max(GameDrawInGameTime, 0f);
+        private float TotalDemand => demand + Mathf.Max(GameDrawInGameTime, 0f) + muOutW;
 
         // +1 while the batteries gain charge, -1 while they lose it, 0 when balanced, full or empty.
         public int ChargeTrend
@@ -314,6 +329,7 @@ namespace SolarGadgets.Game
             string time = previousTime.HasValue ? previousTime.Value.ToString("HH:mm") : "--:--";
             return $"{(isDay ? "Day" : "Night")} {time}, powered: {Powered}, brightness: {Brightness:P0}, " +
                 $"supply: {TotalSupply:F0} W / demand: {TotalDemand:F0} W" +
+                (muPartners.Count > 0 ? $", MU partners: {muPartners.Count}" : "") +
                 (LocoDead ? ", loco dead" : "");
         }
 
@@ -437,6 +453,7 @@ namespace SolarGadgets.Game
             AddConsumer(status, "Traction and loco systems", GameDrawInGameTime);
             // Moves energy between batteries rather than using it, so it is listed but not part of Demand.
             AddConsumer(status, "Boost converter (to loco battery)", converterInputW);
+            AddConsumer(status, "Other locos on the MU cable", muOutW);
             bool? filter = ConsumerFuseFilter();
             foreach (var customizer in AllCustomizers())
             {
@@ -633,6 +650,7 @@ namespace SolarGadgets.Game
                 return;
             }
             GatherGadgets();
+            UpdateMuPartners();
 
             var weather = SingletonBehaviour<WeatherDriver>.Instance;
             if (weather != null && weather.manager != null)
@@ -670,6 +688,11 @@ namespace SolarGadgets.Game
                     {
                         ShareExternal(dynamoW * hours, charging: true);
                     }
+                    EqualizeMu(hours);
+                    muInW = (float)(muInWattHours / hours);
+                    muOutW = (float)(muOutWattHours / hours);
+                    muInWattHours = 0.0;
+                    muOutWattHours = 0.0;
                 }
                 else
                 {
@@ -714,7 +737,8 @@ namespace SolarGadgets.Game
         // A loco battery counts while its electrics are on.
         private bool ComputePowered()
         {
-            return SupplyCoversDemand || FirstChargedBattery() != null || (locoActive && !loco!.IsEmpty);
+            return SupplyCoversDemand || FirstChargedBattery() != null || (locoActive && !loco!.IsEmpty)
+                || MuStored(out _) > 0.0;
         }
 
         // Brightness follows the capacity-weighted charge of every battery that can cover the deficit, so it fades
@@ -743,11 +767,15 @@ namespace SolarGadgets.Game
                 capacity += loco.CapacityWh;
             }
 
-            if (capacity <= 0.0)
+            // MU partners take over once this loco's own batteries run low, so the lights follow whichever holds more.
+            double muEnergy = MuStored(out double muCapacity);
+            if (capacity <= 0.0 && muCapacity <= 0.0)
             {
                 return batteries.Count == 0 ? 1f : 0f;
             }
-            return Mathf.Clamp01((float)(energy / capacity * 100.0) / DIMMING_START_CHARGE);
+            double own = capacity > 0.0 ? energy / capacity : 0.0;
+            double mu = muCapacity > 0.0 ? muEnergy / muCapacity : 0.0;
+            return Mathf.Clamp01((float)(Math.Max(own, mu) * 100.0) / DIMMING_START_CHARGE);
         }
 
         private bool ComputeLocoDead()
@@ -757,7 +785,8 @@ namespace SolarGadgets.Game
                 && loco!.HasStarter
                 && !loco.EngineOn
                 && loco.IsEmpty
-                && converterOutputW < locoLoad;
+                && converterOutputW < locoLoad
+                && MuStored(out _) <= 0.0;
         }
 
         private GadgetBattery? FirstChargedBattery()
@@ -883,7 +912,8 @@ namespace SolarGadgets.Game
             double locoFromAlternator = Math.Min(alternatorWattHours, locoWattHours);
             if (locoWattHours > locoFromAlternator)
             {
-                loco!.Take(locoWattHours - locoFromAlternator);
+                double fromBattery = locoWattHours - locoFromAlternator;
+                DrawFromMu(fromBattery - loco!.Take(fromBattery));
             }
 
             double alternatorSurplus = alternatorWattHours - locoFromAlternator - gadgetDemand * hours;
@@ -973,7 +1003,8 @@ namespace SolarGadgets.Game
                 : $"Boost converter: {soldered} x, {amps:F0} A, idle";
         }
 
-        // Takes energy from the external batteries, then the internal loco battery. Returns what was not covered.
+        // Takes energy from the external batteries, then the internal loco battery, then the MU partners. Returns what
+        // was not covered.
         private double DrawEnergy(double wattHours, bool includeInternal)
         {
             wattHours = ShareExternal(wattHours, charging: false);
@@ -981,6 +1012,203 @@ namespace SolarGadgets.Game
             if (includeInternal && loco != null && wattHours > 0.0)
             {
                 wattHours -= loco.Take(wattHours);
+            }
+            return DrawFromMu(Math.Max(wattHours, 0.0));
+        }
+
+        // Finds every loco reachable over connected MU cables, through any number of cars.
+        private void UpdateMuPartners()
+        {
+            muPartners.Clear();
+            muVisited.Clear();
+            muQueue.Clear();
+            var car = customization.TrainCar;
+            if (car == null || car.muModule == null)
+            {
+                return;
+            }
+            muVisited.Add(car.muModule);
+            muQueue.Enqueue(car.muModule);
+            while (muQueue.Count > 0)
+            {
+                var module = muQueue.Dequeue();
+                VisitMu(module.FrontCable);
+                VisitMu(module.RearCable);
+            }
+        }
+
+        private void VisitMu(MultipleUnitCable? cable)
+        {
+            var other = cable?.connectedTo?.muModule;
+            if (other == null || !muVisited.Add(other))
+            {
+                return;
+            }
+            muQueue.Enqueue(other);
+            var network = other.train != null ? Get(other.train.Customization) : null;
+            if (network != null && network != this && network.GivesOverMu && !muPartners.Contains(network))
+            {
+                muPartners.Add(network);
+            }
+        }
+
+        // A loco only feeds the MU cable while its own electrics fuse is on.
+        private bool GivesOverMu => customization.electronicsFuse != null && customization.electronicsFuse.State;
+
+        private double BankStored()
+        {
+            double stored = 0.0;
+            foreach (var battery in batteries)
+            {
+                if (battery.IsSoldered)
+                {
+                    stored += battery.battery.CurrentPower / 100.0 * BatteryCapacity(battery);
+                }
+            }
+            return stored;
+        }
+
+        private double BankCapacity()
+        {
+            double capacity = 0.0;
+            foreach (var battery in batteries)
+            {
+                if (battery.IsSoldered)
+                {
+                    capacity += BatteryCapacity(battery);
+                }
+            }
+            return capacity;
+        }
+
+        private double LocoStored => LocoSimulated ? loco!.Charge / 100.0 * loco.CapacityWh : 0.0;
+
+        private double LocoCapacity => LocoSimulated ? loco!.CapacityWh : 0.0;
+
+        // Energy the MU partners can still give, and what they hold when full.
+        private double MuStored(out double capacity)
+        {
+            double stored = 0.0;
+            capacity = 0.0;
+            foreach (var partner in muPartners)
+            {
+                if (partner != null)
+                {
+                    stored += partner.BankStored() + partner.LocoStored;
+                    capacity += partner.BankCapacity() + partner.LocoCapacity;
+                }
+            }
+            return stored;
+        }
+
+        private readonly List<SolarPowerNetwork> muGroup = new List<SolarPowerNetwork>();
+
+        // Evens out the charge percentage of the loco batteries on one MU cable, up to MU_EQUALIZE_W. Only the network
+        // with the lowest instance id runs it, so a group is equalized once per tick, not once per loco.
+        private void EqualizeMu(double hours)
+        {
+            muGroup.Clear();
+            if (!LocoSimulated || !GivesOverMu || hours <= 0.0)
+            {
+                return;
+            }
+            muGroup.Add(this);
+            foreach (var partner in muPartners)
+            {
+                if (partner == null || !partner.LocoSimulated)
+                {
+                    continue;
+                }
+                if (partner.GetInstanceID() < GetInstanceID())
+                {
+                    return;
+                }
+                muGroup.Add(partner);
+            }
+            if (muGroup.Count < 2)
+            {
+                return;
+            }
+
+            double stored = 0.0;
+            double capacity = 0.0;
+            foreach (var network in muGroup)
+            {
+                stored += network.LocoStored;
+                capacity += network.LocoCapacity;
+            }
+            double target = stored / capacity;
+
+            double excess = 0.0;
+            double room = 0.0;
+            foreach (var network in muGroup)
+            {
+                double offset = network.LocoStored - target * network.LocoCapacity;
+                if (offset > 0.0)
+                {
+                    excess += offset;
+                }
+                else
+                {
+                    room -= offset;
+                }
+            }
+            double moved = Math.Min(Math.Min(excess, room), PowerSpec.MU_EQUALIZE_W * Main.Settings.chargingMultiplier * hours);
+            if (moved <= 0.0)
+            {
+                return;
+            }
+
+            // Donors give in proportion to how far they are above the target, receivers take in proportion to how far
+            // they are below, so nobody overshoots it.
+            double taken = 0.0;
+            foreach (var network in muGroup)
+            {
+                double offset = network.LocoStored - target * network.LocoCapacity;
+                if (offset > 0.0)
+                {
+                    double given = network.loco!.Take(moved * offset / excess);
+                    network.muOutWattHours += given;
+                    taken += given;
+                }
+            }
+            foreach (var network in muGroup)
+            {
+                double offset = network.LocoStored - target * network.LocoCapacity;
+                if (offset < 0.0)
+                {
+                    network.muInWattHours += network.loco!.Add(taken * -offset / room);
+                }
+            }
+        }
+
+        // Covers a deficit from the MU partners in turn. Returns what they could not cover.
+        private double DrawFromMu(double wattHours)
+        {
+            foreach (var partner in muPartners)
+            {
+                if (wattHours <= 0.0)
+                {
+                    break;
+                }
+                if (partner != null)
+                {
+                    double remaining = partner.GiveOverMu(wattHours);
+                    partner.muOutWattHours += wattHours - remaining;
+                    muInWattHours += wattHours - remaining;
+                    wattHours = remaining;
+                }
+            }
+            return wattHours;
+        }
+
+        // Gives from this loco's external batteries, then its loco battery. Returns what was not covered.
+        private double GiveOverMu(double wattHours)
+        {
+            wattHours = ShareExternal(wattHours, charging: false);
+            if (LocoSimulated && wattHours > 0.0)
+            {
+                wattHours -= loco!.Take(wattHours);
             }
             return Math.Max(wattHours, 0.0);
         }
@@ -1057,32 +1285,69 @@ namespace SolarGadgets.Game
         }
 
         /// <summary>
-        /// Pays for one starter press and rolls whether the engine turns over.
-        /// The battery that pays decides the failure chance: the external bank when it holds the whole cost.
+        /// Pays for one starter press and rolls whether the engine turns over. The battery holding the most energy pays:
+        /// this loco's external bank or loco battery, or those of an MU partner. Its charge decides the failure chance.
         /// </summary>
         public bool TryStart(LocoElectrics starting)
         {
             float costPercent = UnityEngine.Random.Range(LocoElectrics.STARTER_COST_MIN, LocoElectrics.STARTER_COST_MAX);
             double cost = costPercent / 100.0 * starting.CapacityWh;
 
-            double externalStored = 0.0;
-            double externalCapacity = 0.0;
-            foreach (var battery in batteries)
+            SolarPowerNetwork payer = this;
+            bool bankPays = false;
+            double bestStored = -1.0;
+            ConsiderPayer(this, ref payer, ref bankPays, ref bestStored);
+            foreach (var partner in muPartners)
             {
-                if (battery.IsSoldered)
+                if (partner != null)
                 {
-                    double capacity = BatteryCapacity(battery);
-                    externalStored += battery.battery.CurrentPower / 100.0 * capacity;
-                    externalCapacity += capacity;
+                    ConsiderPayer(partner, ref payer, ref bankPays, ref bestStored);
                 }
             }
-            bool externalPays = externalStored >= cost && externalStored > 0.0;
-            float charge = externalPays ? (float)(externalStored / externalCapacity * 100.0) : starting.Charge;
-            float failChance = !externalPays && starting.IsEmpty ? 1f : Mathf.Clamp01((LocoElectrics.START_FAIL_CHARGE - charge) / LocoElectrics.START_FAIL_CHARGE);
 
-            DrawEnergy(cost, includeInternal: true);
+            float charge;
+            double rest;
+            if (bankPays)
+            {
+                charge = (float)(payer.BankStored() / payer.BankCapacity() * 100.0);
+                rest = payer.ShareExternal(cost, charging: false);
+            }
+            else
+            {
+                charge = payer.loco!.Charge;
+                rest = cost - payer.loco.Take(cost);
+            }
+            if (payer != this)
+            {
+                payer.muOutWattHours += cost - rest;
+                muInWattHours += cost - rest;
+            }
+            float failChance = bestStored <= 0.0 ? 1f : Mathf.Clamp01((LocoElectrics.START_FAIL_CHARGE - charge) / LocoElectrics.START_FAIL_CHARGE);
+
+            // A payer short of the full cost leaves the rest to the usual order of sources.
+            if (rest > 0.0)
+            {
+                DrawEnergy(rest, includeInternal: true);
+            }
 
             return UnityEngine.Random.value >= failChance;
+        }
+
+        // By stored energy, not charge percentage, so a big half-full battery beats a small full one.
+        private static void ConsiderPayer(SolarPowerNetwork network, ref SolarPowerNetwork payer, ref bool bankPays, ref double bestStored)
+        {
+            if (network.BankCapacity() > 0.0 && network.BankStored() > bestStored)
+            {
+                payer = network;
+                bankPays = true;
+                bestStored = network.BankStored();
+            }
+            if (network.LocoSimulated && network.LocoStored > bestStored)
+            {
+                payer = network;
+                bankPays = false;
+                bestStored = network.LocoStored;
+            }
         }
 
         // Mirrors SolarPanel.GenerateBatteryPower: output in shade or low light is floored at 0.2.
