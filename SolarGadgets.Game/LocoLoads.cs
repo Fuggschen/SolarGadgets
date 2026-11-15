@@ -1,4 +1,3 @@
-using DV.HUD;
 using DV.Simulation.Cars;
 
 namespace SolarGadgets.Game
@@ -8,6 +7,8 @@ namespace SolarGadgets.Game
     /// </summary>
     public struct LocoLoads
     {
+        private const string DASH_LAMP_STATE_PORT = "dashLamp.LAMP_STATE";
+
         public float Electronics;
         public float Headlights;
         public float CabLights;
@@ -37,22 +38,16 @@ namespace SolarGadgets.Game
                 }
             }
 
+            // isOn is the game's own state: switch at or above the cab light step, fuse on, lamps intact.
             var cabLights = sim.cabLightsController;
-            bool dashLit = false;
-            if (cabLights != null)
+            if (cabLights != null && cabLights.isOn)
             {
-                // isOn is the game's own state: switch at or above the cab light step, fuse on, lamps intact.
-                if (cabLights.isOn)
-                {
-                    loads.CabLights = PowerSpec.DIESEL_CAB_LIGHTS_W;
-                }
-                // The first step above off lights the dash, so any position other than off counts.
-                bool fused = cabLights.powerFuse == null || cabLights.powerFuse.State;
-                dashLit = fused && cabLights.controlPort != null && cabLights.controlPort.Value > 0.01f;
+                loads.CabLights = PowerSpec.DIESEL_CAB_LIGHTS_W;
             }
 
-            var overrider = sim.controlsOverrider;
-            if (dashLit || (overrider != null && overrider.GetValue(InteriorControlsManager.ControlType.IndDashLight, 0f) > 0.5f))
+            // The vanilla diesels light their gauges through this lamp, whatever switch feeds it. 0 is off, higher
+            // values are on or blinking. Locos without it, like the BE2, light their gauges with the cab lights.
+            if (sim.simFlow != null && sim.simFlow.TryGetPort(DASH_LAMP_STATE_PORT, out var dashLamp) && dashLamp.Value > 0f)
             {
                 loads.DashLight = PowerSpec.DIESEL_DASH_LIGHT_W;
             }
