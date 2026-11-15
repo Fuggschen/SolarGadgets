@@ -63,6 +63,9 @@ namespace SolarGadgets.Game
         private float converterInputW;
         private float converterOutputW;
 
+        // Last tick's diesel alternator output, 0 while the engine is off.
+        private float alternatorW;
+
         // Last tick's steam dynamo power into the external batteries.
         private float dynamoW;
 
@@ -175,12 +178,15 @@ namespace SolarGadgets.Game
         {
             get
             {
-                float solar = production - (AlternatorRunning ? 0f : gadgetDemand);
+                // Negative when the alternator is off or too weak: the loco battery covers the rest of its loads.
+                float alternatorAfterLoco = alternatorW - locoLoad;
+                float alternatorSurplus = Mathf.Max(alternatorAfterLoco, 0f) - gadgetDemand;
+                float solar = production + Mathf.Min(alternatorSurplus, 0f);
                 if (solar > 0f && FindEmptiestBattery() == null && !CanChargeLocoFromSolar)
                 {
                     solar = 0f;
                 }
-                float loco = AlternatorRunning ? supply - production - dynamoW - demand : -locoLoad;
+                float loco = Mathf.Max(alternatorSurplus, 0f) + Mathf.Min(alternatorAfterLoco, 0f);
                 float dynamo = FindEmptiestBattery() != null ? dynamoW : 0f;
                 return solar + loco + dynamo - (converterInputW - converterOutputW) - GameDrawInGameTime;
             }
@@ -515,11 +521,9 @@ namespace SolarGadgets.Game
                 locoLoad = (locoActive ? loco!.Loads().Total : 0f) * consumption;
                 gadgetDemand = ConsumerWatts(ConsumerFuseFilter()) * consumption;
                 demand = locoLoad + gadgetDemand;
-                float alternator = locoActive && loco!.EngineOn
-                    ? demand + PowerSpec.ALTERNATOR_SURPLUS_W * Main.Settings.chargingMultiplier
-                    : 0f;
+                alternatorW = AlternatorRunning ? PowerSpec.ALTERNATOR_W * Main.Settings.chargingMultiplier : 0f;
                 dynamoW = DynamoFlow() * PowerSpec.DYNAMO_SURPLUS_W * Main.Settings.chargingMultiplier;
-                supply = production + alternator + dynamoW;
+                supply = production + alternatorW + dynamoW;
                 gameDraw = LocoSimulated ? loco!.GameWatts : 0f;
 
                 // A backwards jump means a load or a time reset; start measuring again from here.
@@ -531,7 +535,7 @@ namespace SolarGadgets.Game
                     double produced = hours > SKIP_THRESHOLD_HOURS
                         ? SkippedProduction(from, now)
                         : production * DayHoursBetween(from, now);
-                    RouteEnergy(produced, alternator, hours);
+                    RouteEnergy(produced, hours);
                     if (dynamoW > 0f)
                     {
                         ShareExternal(dynamoW * hours, charging: true);
@@ -570,8 +574,11 @@ namespace SolarGadgets.Game
             return fullDays * (DAY_END_TIME - DAY_START_TIME) + today;
         }
 
-        // Solar only reaches the gadgets directly, so with loco loads only a running alternator covers everything.
-        private bool SupplyCoversDemand => AlternatorRunning || (locoLoad <= 0f && production > 0f && production >= gadgetDemand);
+        // Solar only reaches the gadgets directly, so loco loads are only covered by a running alternator. What the
+        // alternator has left after them goes to the gadgets together with solar.
+        private bool SupplyCoversDemand => (alternatorW > 0f || production > 0f)
+            && alternatorW >= locoLoad
+            && alternatorW - locoLoad + production >= gadgetDemand;
 
         // Without a charged battery the panels must cover the whole demand, otherwise everything browns out.
         // A loco battery counts while its electrics are on.
@@ -732,19 +739,28 @@ namespace SolarGadgets.Game
         // The network charges instead of SolarPanel (its battery stays null), so skipped daylight is credited too.
         // Solar and the external batteries are on the 12 V side: solar covers the gadgets, then feeds the boost
         // converters up to their rating, and charges the external batteries with the rest. The loco's own loads run
-        // on the loco battery, which only the converters or a running engine's alternator charge. The alternator's
-        // surplus fills the loco battery first and the external batteries with what it cannot store. A gadget deficit
-        // draws from the external batteries first, then from the loco battery while its electrics are on.
-        private void RouteEnergy(double solarWattHours, float alternator, double hours)
+        // on the loco battery, which only the converters or a running engine's alternator charge. The alternator
+        // covers the loco's own loads, then the gadgets, and its surplus fills the loco battery first and the external
+        // batteries with what it cannot store. A gadget deficit draws from the external batteries first, then from
+        // the loco battery while its electrics are on.
+        private void RouteEnergy(double solarWattHours, double hours)
         {
             converterInputW = 0f;
             converterOutputW = 0f;
 
-            if (alternator > 0f)
+            double alternatorWattHours = alternatorW * hours;
+            double locoWattHours = locoLoad * hours;
+            double locoFromAlternator = Math.Min(alternatorWattHours, locoWattHours);
+            if (locoWattHours > locoFromAlternator)
+            {
+                loco!.Take(locoWattHours - locoFromAlternator);
+            }
+
+            double alternatorSurplus = alternatorWattHours - locoFromAlternator - gadgetDemand * hours;
+            if (alternatorSurplus > 0.0)
             {
                 // The alternator covers all demand, so every solar Wh is surplus.
-                double alternatorWattHours = (alternator - demand) * hours;
-                double overflow = alternatorWattHours - loco!.Add(alternatorWattHours);
+                double overflow = alternatorSurplus - loco!.Add(alternatorSurplus);
                 RouteSolarSurplus(solarWattHours, hours);
                 if (overflow > 0.0)
                 {
@@ -753,12 +769,7 @@ namespace SolarGadgets.Game
                 return;
             }
 
-            if (locoLoad > 0f)
-            {
-                loco!.Take(locoLoad * hours);
-            }
-
-            double net = solarWattHours - gadgetDemand * hours;
+            double net = solarWattHours + alternatorSurplus;
             if (net < 0.0)
             {
                 DrawEnergy(-net, includeInternal: locoActive);

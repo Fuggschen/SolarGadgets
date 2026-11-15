@@ -23,11 +23,12 @@ namespace SolarGadgets.Game
         public const float DIESEL_CAB_LIGHTS_W = 60f;
         public const float DIESEL_DASH_LIGHT_W = 20f;
 
-        // A running engine covers all loco draw plus this, enough to refill the battery in about 6 hours.
-        public const float ALTERNATOR_SURPLUS_W = 5000f;
+        // A running engine's alternator output. It covers the loco's own loads and the gadgets first; with only the
+        // loco's own loads the rest refills the battery in about 7 hours.
+        public const float ALTERNATOR_W = 5000f;
 
-        // A steam loco's dynamo at full flow charges the external batteries with a tenth of the alternator surplus.
-        public const float DYNAMO_SURPLUS_W = ALTERNATOR_SURPLUS_W / 10f;
+        // A steam loco's dynamo at full flow charges the external batteries with a tenth of the alternator output.
+        public const float DYNAMO_SURPLUS_W = ALTERNATOR_W / 10f;
 
         // The sim Battery consumes 4 * power[W] * dt[s] / 1e6 container units, so one unit is 250 kJ.
         public const float WH_PER_SIM_UNIT = 1e6f / 4f / 3600f;
