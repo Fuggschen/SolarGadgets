@@ -103,7 +103,8 @@ namespace SolarGadgets.Game
             {
                 return null;
             }
-            float whPerUnit = sim.simFlow.TryGetPort(DE10_PORT, out _) ? NominalVolts(battery) : PowerSpec.WH_PER_SIM_UNIT;
+            // Looked up directly: TryGetPort logs an error for every loco without the port.
+            float whPerUnit = sim.simFlow.fullPortIdToPort.ContainsKey(DE10_PORT) ? NominalVolts(battery) : PowerSpec.WH_PER_SIM_UNIT;
             return new TractionBattery(car, charge, fuse, whPerUnit);
         }
 

@@ -47,7 +47,8 @@ namespace SolarGadgets.Game
 
             // The vanilla diesels light their gauges through this lamp, whatever switch feeds it. 0 is off, higher
             // values are on or blinking. Locos without it, like the BE2, light their gauges with the cab lights.
-            if (sim.simFlow != null && sim.simFlow.TryGetPort(DASH_LAMP_STATE_PORT, out var dashLamp) && dashLamp.Value > 0f)
+            // Looked up directly: TryGetPort logs an error for every loco without the port.
+            if (sim.simFlow != null && sim.simFlow.fullPortIdToPort.TryGetValue(DASH_LAMP_STATE_PORT, out var dashLamp) && dashLamp.Value > 0f)
             {
                 loads.DashLight = PowerSpec.DIESEL_DASH_LIGHT_W;
             }
