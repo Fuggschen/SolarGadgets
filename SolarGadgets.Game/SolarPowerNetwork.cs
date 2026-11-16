@@ -55,7 +55,7 @@ namespace SolarGadgets.Game
         private SolarPowerNetwork? leader;
 
         // Locos on the same MU cable whose electrics are on, refreshed every tick. They cover what this network's own
-        // sources cannot, but their batteries never equalize with this one's.
+        // sources cannot, and their batteries slowly even out their charge with this one's.
         private readonly List<SolarPowerNetwork> muPartners = new List<SolarPowerNetwork>();
         private readonly HashSet<MultipleUnitModule> muVisited = new HashSet<MultipleUnitModule>();
         private readonly Queue<MultipleUnitModule> muQueue = new Queue<MultipleUnitModule>();
@@ -412,9 +412,10 @@ namespace SolarGadgets.Game
                     Capacity = loco.CapacityWh,
                 });
                 status.Capacity += loco.CapacityWh;
-                // Only a boost converter, a running alternator or the game itself (regenerative braking, a modded
-                // generator) charges the loco battery; DrawEnergy only takes from it while its electrics are on.
-                if (ConverterBudgetWatts() > 0f || AlternatorRunning || GameDrawInGameTime < 0f)
+                // Only a boost converter, a running alternator, the game itself (regenerative braking, a modded
+                // generator) or another loco on the MU cable charges the loco battery; DrawEnergy only takes from it
+                // while its electrics are on.
+                if (ConverterBudgetWatts() > 0f || AlternatorRunning || GameDrawInGameTime < 0f || muInW > 0f)
                 {
                     status.Room += (100f - loco.Charge) / 100f * loco.CapacityWh;
                 }
@@ -1102,20 +1103,23 @@ namespace SolarGadgets.Game
         }
 
         private readonly List<SolarPowerNetwork> muGroup = new List<SolarPowerNetwork>();
+        private readonly List<double> muOffsets = new List<double>();
 
-        // Evens out the charge percentage of the loco batteries on one MU cable, up to MU_EQUALIZE_W. Only the network
-        // with the lowest instance id runs it, so a group is equalized once per tick, not once per loco.
+        // Evens out the charge percentage of the locos on one MU cable, up to MU_EQUALIZE_W. Each loco takes part with
+        // its loco battery and soldered Solar Batteries together, so nothing moves between batteries of the same loco.
+        // Only the network with the lowest instance id runs it, so a group is equalized once per tick, not once per loco.
         private void EqualizeMu(double hours)
         {
             muGroup.Clear();
-            if (!LocoSimulated || !GivesOverMu || hours <= 0.0)
+            muOffsets.Clear();
+            if (!GivesOverMu || MuMemberCapacity <= 0.0 || hours <= 0.0)
             {
                 return;
             }
             muGroup.Add(this);
             foreach (var partner in muPartners)
             {
-                if (partner == null || !partner.LocoSimulated)
+                if (partner == null || partner.MuMemberCapacity <= 0.0)
                 {
                     continue;
                 }
@@ -1134,8 +1138,8 @@ namespace SolarGadgets.Game
             double capacity = 0.0;
             foreach (var network in muGroup)
             {
-                stored += network.LocoStored;
-                capacity += network.LocoCapacity;
+                stored += network.MuMemberStored;
+                capacity += network.MuMemberCapacity;
             }
             double target = stored / capacity;
 
@@ -1143,7 +1147,8 @@ namespace SolarGadgets.Game
             double room = 0.0;
             foreach (var network in muGroup)
             {
-                double offset = network.LocoStored - target * network.LocoCapacity;
+                double offset = network.MuMemberStored - target * network.MuMemberCapacity;
+                muOffsets.Add(offset);
                 if (offset > 0.0)
                 {
                     excess += offset;
@@ -1162,24 +1167,48 @@ namespace SolarGadgets.Game
             // Donors give in proportion to how far they are above the target, receivers take in proportion to how far
             // they are below, so nobody overshoots it.
             double taken = 0.0;
-            foreach (var network in muGroup)
+            for (int i = 0; i < muGroup.Count; i++)
             {
-                double offset = network.LocoStored - target * network.LocoCapacity;
-                if (offset > 0.0)
+                if (muOffsets[i] > 0.0)
                 {
-                    double given = network.loco!.Take(moved * offset / excess);
-                    network.muOutWattHours += given;
+                    double request = moved * muOffsets[i] / excess;
+                    double given = request - muGroup[i].GiveOverMu(request);
+                    muGroup[i].muOutWattHours += given;
                     taken += given;
                 }
             }
-            foreach (var network in muGroup)
+            for (int i = 0; i < muGroup.Count; i++)
             {
-                double offset = network.LocoStored - target * network.LocoCapacity;
-                if (offset < 0.0)
+                if (muOffsets[i] < 0.0)
                 {
-                    network.muInWattHours += network.loco!.Add(taken * -offset / room);
+                    muGroup[i].muInWattHours += muGroup[i].ReceiveOverMu(taken * -muOffsets[i] / room);
                 }
             }
+        }
+
+        private double MuMemberStored => LocoStored + BankStored();
+
+        private double MuMemberCapacity => LocoCapacity + BankCapacity();
+
+        // Splits what comes in over the MU cable between the loco battery and the Solar Batteries by their free room.
+        // Returns what was stored.
+        private double ReceiveOverMu(double wattHours)
+        {
+            double locoRoom = LocoCapacity - LocoStored;
+            double bankRoom = BankCapacity() - BankStored();
+            double totalRoom = locoRoom + bankRoom;
+            if (wattHours <= 0.0 || totalRoom <= 0.0)
+            {
+                return 0.0;
+            }
+            double toLoco = wattHours * locoRoom / totalRoom;
+            double toBank = wattHours - toLoco;
+            double stored = toLoco > 0.0 ? loco!.Add(toLoco) : 0.0;
+            if (toBank > 0.0)
+            {
+                stored += toBank - ShareExternal(toBank, charging: true);
+            }
+            return stored;
         }
 
         // Covers a deficit from the MU partners in turn. Returns what they could not cover.

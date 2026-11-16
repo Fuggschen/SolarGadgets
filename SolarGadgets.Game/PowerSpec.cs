@@ -30,7 +30,7 @@ namespace SolarGadgets.Game
         // A steam loco's dynamo at full flow charges the external batteries with a tenth of the alternator output.
         public const float DYNAMO_SURPLUS_W = ALTERNATOR_W / 10f;
 
-        // Most the loco batteries on one MU cable move between each other to even out their charge.
+        // Most the locos on one MU cable move between each other to even out their charge.
         public const float MU_EQUALIZE_W = 2000f;
 
         // The sim Battery consumes 4 * power[W] * dt[s] / 1e6 container units, so one unit is 250 kJ.
