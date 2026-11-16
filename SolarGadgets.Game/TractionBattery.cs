@@ -10,8 +10,17 @@ namespace SolarGadgets.Game
     /// </summary>
     public class TractionBattery : IInternalBattery
     {
+        // The JNR DE10 mod runs its own electrics on this port and counts its battery in Ah.
+        private const string DE10_PORT = "de10ChargeRequested.EXT_IN";
+
+        // The DE10 mod's battery voltage, for a sim Battery that reports no usable range.
+        private const float FALLBACK_VOLTS = 24f;
+
         private readonly ResourceContainer container;
         private readonly Fuse fuse;
+
+        // Wh in one container unit: the game's sim units, or Ah times volts where a mod counts in Ah.
+        private readonly float whPerUnit;
 
         // Container units this mod wrote since the last sample, so they can be told apart from the game's own.
         private double ownUnits;
@@ -28,7 +37,7 @@ namespace SolarGadgets.Game
         public float Charge => container.normalizedReadOutPort.Value * 100f;
 
         // A real battery, so the capacity setting does not apply.
-        public float CapacityWh => container.capacity * PowerSpec.WH_PER_SIM_UNIT;
+        public float CapacityWh => container.capacity * whPerUnit;
 
         public bool IsEmpty => container.amountReadOut.Value <= 0f;
 
@@ -51,7 +60,7 @@ namespace SolarGadgets.Game
             if (sampledTime >= 0f)
             {
                 double gameUnits = amount - sampledAmount - ownUnits;
-                gameWatts = (float)(-gameUnits * PowerSpec.WH_PER_SIM_UNIT / ((now - sampledTime) / 3600.0));
+                gameWatts = (float)(-gameUnits * whPerUnit / ((now - sampledTime) / 3600.0));
             }
             sampledAmount = amount;
             sampledTime = now;
@@ -59,11 +68,12 @@ namespace SolarGadgets.Game
             return gameWatts;
         }
 
-        private TractionBattery(TrainCar car, ResourceContainer container, Fuse fuse)
+        private TractionBattery(TrainCar car, ResourceContainer container, Fuse fuse, float whPerUnit)
         {
             Car = car;
             this.container = container;
             this.fuse = fuse;
+            this.whPerUnit = whPerUnit;
         }
 
         // Battery-electric locos: a sim Battery fed by an electric charge container.
@@ -89,7 +99,19 @@ namespace SolarGadgets.Game
                     charge = container;
                 }
             }
-            return battery != null && charge != null ? new TractionBattery(car, charge, fuse) : null;
+            if (battery == null || charge == null)
+            {
+                return null;
+            }
+            float whPerUnit = sim.simFlow.TryGetPort(DE10_PORT, out _) ? NominalVolts(battery) : PowerSpec.WH_PER_SIM_UNIT;
+            return new TractionBattery(car, charge, fuse, whPerUnit);
+        }
+
+        // The middle of the sim Battery's voltage range, which follows from its chemistry and cell count.
+        private static float NominalVolts(LocoSim.Implementations.Battery battery)
+        {
+            float volts = (battery.minVoltage + battery.maxVoltage) / 2f;
+            return volts > 0f && !float.IsInfinity(volts) ? volts : FALLBACK_VOLTS;
         }
 
         public LocoLoads Loads()
@@ -101,26 +123,26 @@ namespace SolarGadgets.Game
         // port keeps a second write in the same tick from replacing the first.
         public double Add(double wattHours)
         {
-            float units = Mathf.Min((float)(wattHours / PowerSpec.WH_PER_SIM_UNIT), container.capacity - container.amountReadOut.Value);
+            float units = Mathf.Min((float)(wattHours / whPerUnit), container.capacity - container.amountReadOut.Value);
             if (units <= 0f)
             {
                 return 0.0;
             }
             container.refillExtIn.Value += units;
             ownUnits += units;
-            return units * PowerSpec.WH_PER_SIM_UNIT;
+            return units * whPerUnit;
         }
 
         public double Take(double wattHours)
         {
-            float units = Mathf.Min((float)(wattHours / PowerSpec.WH_PER_SIM_UNIT), container.amountReadOut.Value);
+            float units = Mathf.Min((float)(wattHours / whPerUnit), container.amountReadOut.Value);
             if (units <= 0f)
             {
                 return 0.0;
             }
             container.consumeExtIn.Value += units;
             ownUnits -= units;
-            return units * PowerSpec.WH_PER_SIM_UNIT;
+            return units * whPerUnit;
         }
 
         public void ApplyBrightness(float brightness)
