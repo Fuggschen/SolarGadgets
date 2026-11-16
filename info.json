@@ -1,6 +1,6 @@
 {
 	"Id": "SolarGadgets",
-	"Version": "1.0.0",
+	"Version": "1.1.0",
 	"DisplayName": "Solar Gadgets",
 	"Author": "Fuggschen",
 	"AssemblyName": "SolarGadgets.Game.dll",
